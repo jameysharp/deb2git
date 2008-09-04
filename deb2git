@@ -1,0 +1,77 @@
+#!/usr/bin/env python
+import os, sys, urllib
+from debian_bundle.debfile import DebFile
+
+def die(message):
+    print >>sys.stderr, message
+    sys.exit(1)
+
+def output_tar(tar, prefix):
+    def process_name(name):
+        name = os.path.normpath(prefix + name.replace('\n', r'\n').replace('"', r'\"')).lstrip('/')
+        equals = 0
+        while name[-equals-1] == '=':
+            equals += 1
+        return name + '='*equals
+
+    for f in tar:
+        name = process_name(f.name)
+        if f.isdir():
+            pass
+        elif f.isfile() or f.islnk():
+            # FIXME: handle hardlinks without duplicating data?
+            if f.mode & 0100:
+                mode = "755"
+            else:
+                mode = "644"
+            if f.islnk():
+                size = tar.getmember(f.linkname).size
+            else:
+                size = f.size
+            sys.stdout.write("M %s inline %s\ndata %u\n" % (mode, name, size))
+            data = tar.extractfile(f)
+            sys.stdout.writelines(iter(lambda: data.read(4096), ''))
+            sys.stdout.write("\n")
+        elif f.issym():
+            sys.stdout.write("M 120000 inline %s\ndata %u\n%s\n"
+                             % (name, len(f.linkname), f.linkname))
+        else:
+            die('.deb contains member "%s" which does not have type dir, file, hardlink, or symlink.' % f.name)
+
+        metadata = "%o %u %u %u\n%s" % (f.mode, f.uid, f.gid, f.mtime, f.linkname)
+        if f.isdir():
+            if name == '.':
+                name = ''
+            else:
+                name += '/'
+        sys.stdout.write("M 644 inline %s=\ndata %u\n%s\n" % (name, len(metadata), metadata))
+
+def output_deb(filename):
+    try:
+        deb = DebFile(filename)
+    except Exception, e:
+        die(str(e))
+
+    try:
+        changelog = deb.changelog()
+        package = changelog.package
+        author = changelog.author
+        version = urllib.quote(changelog.full_version)
+        date = changelog.date
+    except Exception, e:
+        die("Error parsing information from changelog: %s" % str(e))
+
+    sys.stdout.write("commit refs/heads/%s_%s\n" % (package, version))
+    sys.stdout.write("committer %s %s\n" % (author, date))
+    sys.stdout.write("data 0\n")
+
+    output_tar(deb.data.tgz(), "")
+    output_tar(deb.control.tgz(), "DEBIAN/")
+
+def main(args):
+    if len(args) != 2:
+        die("Usage: deb2git package.deb | git-fast-import --date-format=rfc822")
+
+    output_deb(args[1])
+
+if __name__ == '__main__': sys.exit(main(sys.argv))
