@@ -39,7 +39,7 @@ def output_commit(out, ref, author, date, files, links):
     out.write("data 0\n")
 
     def process_name(name):
-        name = os.path.normpath(name.replace('\n', r'\n').replace('"', r'\"')).lstrip('/')
+        name = os.path.normpath(name.replace('\\', r'\\').replace('\n', r'\n').replace('"', r'\"')).lstrip('/')
         equals = 0
         while name[-equals-1] == '=':
             equals += 1
