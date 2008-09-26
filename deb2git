@@ -83,13 +83,14 @@ def output_deb(filename):
         die(str(e))
 
     try:
+        control = deb.debcontrol()
+        package = control["Package"]
+        version = urllib.quote(control["Version"])
         changelog = deb.changelog()
-        package = changelog.package
         author = changelog.author
-        version = urllib.quote(changelog.full_version)
         date = changelog.date
     except Exception, e:
-        die("Error parsing information from changelog: %s" % str(e))
+        die("Error parsing package metadata from control and changelog: %s" % str(e))
 
     (mark, control_files, control_links) = output_tar(sys.stdout, deb.control.tgz(), 1)
     output_commit(sys.stdout,
