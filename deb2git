@@ -70,7 +70,7 @@ def output_deb(filename):
 
 def main(args):
     if len(args) != 2:
-        die("Usage: deb2git package.deb | git-fast-import --date-format=rfc822")
+        die("Usage: deb2git package.deb | git fast-import --date-format=rfc2822")
 
     output_deb(args[1])
 
