@@ -68,7 +68,7 @@ def output_commit(out, ref, author, date, files, links):
         else:
             linkhash = ""
 
-        metadata = "%o %u %u %u%s\n" % (f.mode, f.uid, f.gid, f.mtime, linkhash)
+        metadata = "%o %u %u%s\n" % (f.mode, f.uid, f.gid, linkhash)
         if f.isdir():
             if name == '.':
                 name = ''
