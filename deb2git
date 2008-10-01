@@ -87,8 +87,12 @@ def output_deb(filename):
         package = control["Package"]
         version = urllib.quote(control["Version"])
         changelog = deb.changelog()
-        author = changelog.author
-        date = changelog.date
+        if changelog is not None:
+            author = changelog.author
+            date = changelog.date
+        else:
+            author = control["Maintainer"]
+            date = "Mon, 16 Aug 1993 00:00:00 +0000"
     except Exception, e:
         die("Error parsing package metadata from control and changelog: %s" % str(e))
 
