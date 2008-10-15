@@ -86,6 +86,7 @@ def output_deb(filename):
         control = deb.debcontrol()
         package = control["Package"]
         version = urllib.quote(control["Version"])
+        arch = control["Architecture"]
         changelog = deb.changelog()
         if changelog is not None:
             author = changelog.author
@@ -98,12 +99,12 @@ def output_deb(filename):
 
     (mark, control_files, control_links) = output_tar(sys.stdout, deb.control.tgz(), 1)
     output_commit(sys.stdout,
-                  "refs/heads/%s_%s_control" % (package, version),
+                  "refs/heads/%s_%s_%s_control" % (package, version, arch),
                   author, date, control_files, control_links)
 
     (mark, data_files, data_links) = output_tar(sys.stdout, deb.data.tgz(), 1)
     output_commit(sys.stdout,
-                  "refs/heads/%s_%s_data" % (package, version),
+                  "refs/heads/%s_%s_%s_data" % (package, version, arch),
                   author, date, data_files, data_links)
 
 def main(args):
