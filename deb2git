@@ -12,18 +12,16 @@ def output_tar_blobs(out, tar, mark):
 
     for f in tar:
         if f.issym():
-            blobmark = mark
+            out.write("blob\nmark :%u\ndata %u\n%s\n" % (mark, len(f.linkname), f.linkname))
+            ret[f.name] = (f, mark)
             mark += 1
-            out.write("blob\nmark :%u\ndata %u\n%s\n" % (blobmark, len(f.linkname), f.linkname))
-            ret[f.name] = (f, blobmark)
         elif f.isfile():
-            blobmark = mark
-            mark += 1
-            out.write("blob\nmark :%u\ndata %u\n" % (blobmark, f.size))
+            out.write("blob\nmark :%u\ndata %u\n" % (mark, f.size))
             data = tar.extractfile(f)
             out.writelines(iter(lambda: data.read(4096), ''))
             out.write("\n")
-            ret[f.name] = (f, blobmark)
+            ret[f.name] = (f, mark)
+            mark += 1
         elif f.islnk():
             ret[f.name] = (f, ret[f.linkname][1])
             links[f.name] = links.setdefault(f.linkname, set((f.linkname,)))
