@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import hashlib, os, sys, urllib
+import hashlib, posixpath, sys, urllib
 from debian_bundle.debfile import DebFile
 
 def die(message):
@@ -39,7 +39,7 @@ def output_commit(out, ref, author, date, files, links):
     out.write("data 0\n")
 
     def process_name(name):
-        name = os.path.normpath(name.replace('\\', r'\\').replace('\n', r'\n').replace('"', r'\"')).lstrip('/')
+        name = posixpath.normpath(name.replace('\\', r'\\').replace('\n', r'\n').replace('"', r'\"')).lstrip('/')
         equals = 0
         while name[-equals-1] == '=':
             equals += 1
