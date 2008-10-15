@@ -6,7 +6,7 @@ def die(message):
     print >>sys.stderr, message
     sys.exit(1)
 
-def output_tar(out, tar, mark):
+def output_tar_blobs(out, tar, mark):
     ret = {}
     links = {}
 
@@ -97,12 +97,12 @@ def output_deb(filename):
     except Exception, e:
         die("Error parsing package metadata from control and changelog: %s" % str(e))
 
-    (mark, control_files, control_links) = output_tar(sys.stdout, deb.control.tgz(), 1)
+    (mark, control_files, control_links) = output_tar_blobs(sys.stdout, deb.control.tgz(), 1)
     output_commit(sys.stdout,
                   "refs/heads/%s_%s_%s_control" % (package, version, arch),
                   author, date, control_files, control_links)
 
-    (mark, data_files, data_links) = output_tar(sys.stdout, deb.data.tgz(), 1)
+    (mark, data_files, data_links) = output_tar_blobs(sys.stdout, deb.data.tgz(), 1)
     output_commit(sys.stdout,
                   "refs/heads/%s_%s_%s_data" % (package, version, arch),
                   author, date, data_files, data_links)
