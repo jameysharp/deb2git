@@ -91,7 +91,7 @@ def output_deb(filename):
             date = changelog.date
         else:
             author = control["Maintainer"]
-            date = "Mon, 16 Aug 1993 00:00:00 +0000"
+            date = "Mon, 16 Aug 1993 13:05:37 +0000"
     except Exception, e:
         die("Error parsing package metadata from control and changelog: %s" % str(e))
 
