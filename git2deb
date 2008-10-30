@@ -1,5 +1,5 @@
 #!/usr/bin/python
-import cStringIO, subprocess, sys, tarfile, tempfile, urllib
+import cStringIO, shutil, subprocess, sys, tarfile, tempfile, urllib
 
 # Hack!
 oldnormpath = tarfile.normpath
@@ -153,7 +153,7 @@ def write_ar_member(out, filename, size, data):
     mode = "100644"
     out.write("".join((filename.ljust(16), mtime.ljust(12), uid.ljust(6),
                        gid.ljust(6), mode.ljust(8), sizestr.ljust(10), "`\n")))
-    out.writelines(iter(lambda: data.read(4096), ''))
+    shutil.copyfileobj(data, out)
     if size % 2:
         out.write("\n")
 

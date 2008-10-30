@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import hashlib, posixpath, sys, urllib
+import hashlib, posixpath, shutil, sys, urllib
 from debian_bundle.debfile import DebFile
 
 def die(message):
@@ -18,7 +18,7 @@ def output_tar_blobs(out, tar, mark):
         elif f.isfile():
             out.write("blob\nmark :%u\ndata %u\n" % (mark, f.size))
             data = tar.extractfile(f)
-            out.writelines(iter(lambda: data.read(4096), ''))
+            shutil.copyfileobj(data, out)
             out.write("\n")
             ret[f.name] = (f, mark)
             mark += 1
