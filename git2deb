@@ -1,0 +1,182 @@
+#!/usr/bin/python
+import cStringIO, subprocess, sys, tarfile, tempfile, urllib
+
+def die(message):
+    print >>sys.stderr, message
+    sys.exit(1)
+
+def open_subprocess(args):
+    return subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            close_fds=True)
+
+def lines_iter(f, terminator='\0'):
+    buffer = ''
+    while True:
+        newbuffer = f.read(4096)
+        if not(newbuffer):
+            break
+        buffer += newbuffer
+        lines = buffer.split(terminator)
+        buffer = lines.pop()
+        for line in lines:
+            yield line
+    if buffer:
+        yield buffer
+
+def read_in_full(f, size):
+    data = f.read(size)
+    if len(data) != size:
+        die("Unexpected EOF")
+    return data
+
+def start_read_object(git_cat_file_batch, sha1, expected_type):
+    git_cat_file_batch.stdin.write(sha1 + "\n")
+    line = git_cat_file_batch.stdout.readline()
+    sha1_response, rest = line.split(' ', 1)
+    if sha1_response != sha1:
+        die("git cat-file --batch returned the wrong sha1")
+    if rest == "missing":
+        die("Missing object with sha1 %s" % sha1)
+    type, size = rest.split(' ', 1)
+    if type != expected_type:
+        die("Type of object %s changed while running" % sha1)
+    return int(size)
+
+def discard_newline(git_cat_file_batch):
+    if read_in_full(git_cat_file_batch.stdout, 1) != '\n':
+        die("No newline after object data from git cat-file --batch")
+
+def read_full_object(git_cat_file_batch, sha1, expected_type):
+    size = start_read_object(git_cat_file_batch, sha1, expected_type)
+    data = read_in_full(git_cat_file_batch.stdout, size)
+    discard_newline(git_cat_file_batch)
+    return data
+
+def get_metadata(git_cat_file_batch, sha1):
+    line = read_full_object(git_cat_file_batch, sha1, "blob")
+    fields = line.split()
+    if len(fields) not in (6, 7):
+        die("Unexpected number of fields in metadata with sha1 %s" % sha1)
+    metadata = dict(mode=int(fields[0], 8),
+                    uid=int(fields[1]), gid=int(fields[2]),
+                    uname=fields[3], gname=fields[4],
+                    mtime=int(fields[5]))
+    if len(fields) == 7:
+        metadata["linkhash"] = fields[6]
+    return metadata
+
+def tree_to_tarball(out, treeish, git_cat_file_batch):
+    git_ls_tree_r = open_subprocess(["git", "ls-tree", "-r", "-t", "-z",
+                                     "--full-name", treeish])
+    files = []
+    metadata_sha1 = {}
+    for line in lines_iter(git_ls_tree_r.stdout):
+        mode, type, sha1, filename = line.split(None, 3)
+        filename = "/" + filename
+        equals = 0
+        while filename[-equals-1] == '=':
+            equals += 1
+        meta = equals % 2
+        if equals > 0:
+            filename = filename[:-(equals//2 + meta)].rstrip('/')
+            if not(filename):
+                filename = '/'
+        if meta:
+            if mode != '100644' or type != 'blob':
+                die("Bad mode or type on metadata file for \"%s\"" % filename)
+            metadata_sha1[filename] = sha1
+            if filename == '/':
+                files.insert(0, ("040000", "tree", "0"*40, filename))
+        else:
+            files.append((mode, type, sha1, filename))
+
+    tar = tarfile.open(mode='w:gz', fileobj=out)
+    links = {}
+    for mode, type, sha1, filename in files:
+        if filename not in metadata_sha1:
+            # Missing metadata for a tree means the original tar
+            # didn't have an entry for the directory
+            if type == "tree":
+                continue
+            die("Missing metadata for file \"%s\"" % filename)
+        metadata = get_metadata(git_cat_file_batch, metadata_sha1[filename])
+        tarinfo = tarfile.TarInfo(filename)
+        tarinfo.mode = metadata["mode"]
+        tarinfo.uid = metadata["uid"]
+        tarinfo.gid = metadata["gid"]
+        tarinfo.uname = metadata["uname"]
+        tarinfo.gname = metadata["gname"]
+        tarinfo.mtime = metadata["mtime"]
+        if type == "tree" and mode == "040000":
+            tarinfo.type = tarfile.DIRTYPE
+            tar.addfile(tarinfo)
+        elif type == "blob" and mode == "120000":
+            tarinfo.type = tarfile.SYMTYPE
+            tarinfo.linkname = read_full_object(git_cat_file_batch, sha1, "blob")
+            tar.addfile(tarinfo)
+        elif type == "blob" and mode in ("100644", "100755"):
+            tarinfo.type = tarfile.REGTYPE
+            if "linkhash" in metadata:
+                linkhash = metadata["linkhash"]
+                if linkhash in links:
+                    tarinfo.type = tarfile.LNKTYPE
+                    tarinfo.linkname = links[linkhash]
+                else:
+                    links[linkhash] = filename
+            if tarinfo.type == tarfile.REGTYPE:
+                tarinfo.size = start_read_object(git_cat_file_batch, sha1, "blob")
+                tar.addfile(tarinfo, git_cat_file_batch.stdout)
+                discard_newline(git_cat_file_batch)
+            else:
+                tar.addfile(tarinfo)
+        else:
+            die("Unexpected type/mode combination %s/%s" % (type, mode))
+
+    tar.close()
+
+def write_ar_member(out, filename, size, data):
+    if len(filename) > 16:
+        die("Ar member filename longer than 16 characters")
+    sizestr = str(size)
+    if len(sizestr) > 10:
+        die("Ar member size larger than 10 decimal digits")
+    mtime = uid = gid = "0"
+    mode = "100644"
+    out.write("".join((filename.ljust(16), mtime.ljust(12), uid.ljust(6),
+                       gid.ljust(6), mode.ljust(8), sizestr.ljust(10), "`\n")))
+    out.writelines(iter(lambda: data.read(4096), ''))
+    if size % 2:
+        out.write("\n")
+
+def git2deb(out, package, version, arch):
+    commit_prefix = "%s_%s_%s_" % (package, urllib.quote(version), arch)
+    control_commit = commit_prefix + "control"
+    data_commit = commit_prefix + "data"
+
+    git_cat_file_batch = open_subprocess(["git", "cat-file", "--batch"])
+
+    out.write("!<arch>\n")
+    write_ar_member(out, "debian-binary", 4, cStringIO.StringIO("2.0\n"))
+
+    control_tempfile = tempfile.TemporaryFile()
+    tree_to_tarball(control_tempfile, control_commit, git_cat_file_batch)
+    control_len = control_tempfile.tell()
+    control_tempfile.seek(0)
+    write_ar_member(out, "control.tar.gz", control_len, control_tempfile)
+    control_tempfile.close()
+
+    data_tempfile = tempfile.TemporaryFile()
+    tree_to_tarball(data_tempfile, data_commit, git_cat_file_batch)
+    data_len = data_tempfile.tell()
+    data_tempfile.seek(0)
+    write_ar_member(out, "data.tar.gz", data_len, data_tempfile)
+    data_tempfile.close()
+
+def main(args):
+    if len(args) != 4:
+        die("Usage: git2deb package version arch")
+
+    package, version, arch = args[1:]
+    git2deb(sys.stdout, package, version, arch)
+
+if __name__ == '__main__': sys.exit(main(sys.argv))
