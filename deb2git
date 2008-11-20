@@ -40,12 +40,9 @@ def output_commit(out, ref, author, date, files, links):
         base = name.rstrip('=')
         return name + '='*(len(name) - len(base))
 
-    def process_name(name):
-        name = posixpath.normpath(name.replace('\\', r'\\').replace('\n', r'\n').replace('"', r'\"')).lstrip('/')
-        return posixpath.join(*[escape_equals(component) for component in name.split('/')])
-
     for (f, mark) in files:
-        name = process_name(f.name)
+        name = posixpath.normpath(f.name.replace('\\', r'\\').replace('\n', r'\n').replace('"', r'\"')).lstrip('/')
+        name = posixpath.join(*[escape_equals(component) for component in name.split('/')])
         if f.isdir():
             pass
         elif f.isfile() or f.islnk():
