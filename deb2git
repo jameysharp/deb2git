@@ -36,12 +36,13 @@ def output_commit(out, ref, author, date, files, links):
     out.write("committer %s %s\n" % (author, date))
     out.write("data 0\n")
 
+    def escape_equals(name):
+        base = name.rstrip('=')
+        return name + '='*(len(name) - len(base))
+
     def process_name(name):
         name = posixpath.normpath(name.replace('\\', r'\\').replace('\n', r'\n').replace('"', r'\"')).lstrip('/')
-        equals = 0
-        while name[-equals-1] == '=':
-            equals += 1
-        return name + '='*equals
+        return posixpath.join(*[escape_equals(component) for component in name.split('/')])
 
     for (f, mark) in files:
         name = process_name(f.name)
