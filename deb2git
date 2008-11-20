@@ -85,13 +85,8 @@ def output_deb(filename):
         package = control["Package"]
         version = urllib.quote(control["Version"])
         arch = control["Architecture"]
-        changelog = deb.changelog()
-        if changelog is not None:
-            author = changelog.author
-            date = changelog.date
-        else:
-            author = control["Maintainer"]
-            date = "Mon, 16 Aug 1993 13:05:37 +0000"
+        author = "deb2git <deb2git@example.org>"
+        date = "745506337 +0000"
     except Exception, e:
         die("Error parsing package metadata from control and changelog: %s" % str(e))
 
@@ -107,7 +102,7 @@ def output_deb(filename):
 
 def main(args):
     if len(args) != 2:
-        die("Usage: deb2git package.deb | git fast-import --date-format=rfc2822")
+        die("Usage: deb2git package.deb | git fast-import")
 
     output_deb(args[1])
 
