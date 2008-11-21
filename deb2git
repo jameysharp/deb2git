@@ -44,7 +44,10 @@ def output_commit(out, ref, author, date, files, links):
         name = posixpath.normpath(f.name.replace('\\', r'\\').replace('\n', r'\n').replace('"', r'\"')).lstrip('/')
         name = posixpath.join(*[escape_equals(component) for component in name.split('/')])
         if f.isdir():
-            pass
+            if name == '.':
+                name = ''
+            else:
+                name += '/'
         elif f.isfile() or f.islnk():
             if f.mode & 0100:
                 mode = "755"
@@ -56,21 +59,21 @@ def output_commit(out, ref, author, date, files, links):
         else:
             die('.deb contains member "%s" which does not have type dir, file, hardlink, or symlink.' % f.name)
 
+        metadata = dict(mode  = "%o" % f.mode,
+                        uid   = str(f.uid),
+                        gid   = str(f.gid),
+                        uname = f.uname,
+                        gname = f.gname,
+                        mtime = str(f.mtime))
+
         if f.name in links:
             hasher = hashlib.sha1()
             for link in sorted(links[f.name]):
                 hasher.update(link + '\0')
-            linkhash = " " + hasher.hexdigest()
-        else:
-            linkhash = ""
+            metadata["linkhash"] = hasher.hexdigest()
 
-        metadata = "%o %u %u %s %s %u%s\n" % (f.mode, f.uid, f.gid, f.uname, f.gname, f.mtime, linkhash)
-        if f.isdir():
-            if name == '.':
-                name = ''
-            else:
-                name += '/'
-        out.write("M 644 inline %s=\ndata %u\n%s\n" % (name, len(metadata), metadata))
+        for key, value in metadata.iteritems():
+            out.write("M 644 inline %s=/%s\ndata %u\n%s\n" % (name, key, len(value), value))
 
 def output_deb(filename):
     try:

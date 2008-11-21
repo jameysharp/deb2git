@@ -63,17 +63,23 @@ def read_full_object(git_cat_file_batch, sha1, expected_type):
     discard_newline(git_cat_file_batch)
     return data
 
-def get_metadata(git_cat_file_batch, sha1):
-    line = read_full_object(git_cat_file_batch, sha1, "blob")
-    fields = line.split()
-    if len(fields) not in (6, 7):
-        die("Unexpected number of fields in metadata with sha1 %s" % sha1)
-    metadata = dict(mode=int(fields[0], 8),
-                    uid=int(fields[1]), gid=int(fields[2]),
-                    uname=fields[3], gname=fields[4],
-                    mtime=int(fields[5]))
-    if len(fields) == 7:
-        metadata["linkhash"] = fields[6]
+def octal_int(s):
+    return int(s, 8)
+
+metadata_parser = dict(
+    mode=octal_int,
+    uid=int, gid=int,
+    uname=str, gname=str,
+    mtime=int,
+    linkhash=str)
+
+def get_metadata(git_cat_file_batch, sha1s):
+    metadata = {}
+    for key, sha1 in sha1s.iteritems():
+        if key not in metadata_parser:
+            die("Unexpected metadata key: %s" % key)
+        s = read_full_object(git_cat_file_batch, sha1, "blob")
+        metadata[key] = metadata_parser[key](s)
     return metadata
 
 def unescape_equals(name):
@@ -87,33 +93,41 @@ def unescape_equals(name):
 def tree_to_tarball(out, treeish, git_cat_file_batch):
     git_ls_tree_r = open_subprocess(["git", "ls-tree", "-r", "-t", "-z",
                                      "--full-name", treeish])
+    dirname_map = {"": (False, ".")}
     files = []
-    metadata_sha1 = {}
+    metadata_sha1s = {}
     for line in lines_iter(git_ls_tree_r.stdout):
-        mode, type, sha1, filename = line.split(None, 3)
-        dirname, basename = posixpath.split(filename)
-        dirname = posixpath.join('.', *[unescape_equals(component)[0] for component in dirname.split('/')])
-        basename, meta = unescape_equals(basename)
-        filename = posixpath.join(dirname, basename).rstrip('/')
-        if meta:
+        mode, type, sha1, escaped_filename = line.split(None, 3)
+        dirname, basename = posixpath.split(escaped_filename)
+        metadir, dirname = dirname_map[dirname]
+        if metadir:
             if mode != '100644' or type != 'blob':
-                die("Bad mode or type on metadata file for \"%s\"" % filename)
-            metadata_sha1[filename] = sha1
-            if filename == '.':
-                files.insert(0, ("040000", "tree", "0"*40, filename))
+                die("Bad mode or type on metadata blob \"%s\" for \"%s\""
+                    % (basename, dirname))
+            metadata_sha1s.setdefault(dirname, {})[basename] = sha1
         else:
-            files.append((mode, type, sha1, filename))
+            basename, meta = unescape_equals(basename)
+            filename = posixpath.join(dirname, basename).rstrip('/')
+            if type == 'tree':
+                dirname_map[escaped_filename] = meta, filename
+            if meta:
+                if mode != '040000' or type != 'tree':
+                    die("Bad mode or type on metadata tree for \"%s\"" % filename)
+                if filename == '.':
+                    files.insert(0, ("040000", "tree", "0"*40, filename))
+            else:
+                files.append((mode, type, sha1, filename))
 
     tar = tarfile.open(mode='w:gz', fileobj=out)
     links = {}
     for mode, type, sha1, filename in files:
-        if filename not in metadata_sha1:
+        if filename not in metadata_sha1s:
             # Missing metadata for a tree means the original tar
             # didn't have an entry for the directory
             if type == "tree":
                 continue
             die("Missing metadata for file \"%s\"" % filename)
-        metadata = get_metadata(git_cat_file_batch, metadata_sha1[filename])
+        metadata = get_metadata(git_cat_file_batch, metadata_sha1s[filename])
         tarinfo = tarfile.TarInfo(filename)
         tarinfo.mode = metadata["mode"]
         tarinfo.uid = metadata["uid"]
