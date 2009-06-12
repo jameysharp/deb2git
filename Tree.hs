@@ -1,30 +1,37 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 module Tree where
 
 import Control.Monad
 import Data.Bits
 import Data.Convertible.Base
-import Data.String
-import Data.Time.Clock.POSIX
+import Data.Convertible.Utils
+import Data.Typeable
 import Data.Word
 import Numeric
 
 data Tree meta blob = Tree [(String, meta, Tree meta blob)] | Blob blob
     deriving Show
 
-data PosixMeta =
-    PosixMode !Word |
-    PosixUID !Word |
-    PosixGID !Word |
-    PosixUName String |
-    PosixGName String |
-    PosixMTime !POSIXTime
+newtype AbstractTree blob = AbstractTree (Tree [(String, blob)] blob)
     deriving Show
 
-newtype PosixTree blob = PosixTree (Tree [PosixMeta] blob)
-    deriving Show
+newtype GitMode = GitMode Word
 
-type GitMode = Word
+instance Show GitMode where
+    showsPrec _ (GitMode mode) = showOct mode
+
+instance Typeable GitMode where
+    typeOf _ = mkTypeName "GitMode"
+
+instance Convertible [Char] GitMode where
+    -- FIXME: handle irregular files
+    -- FIXME: use 0o120000 for symlinks
+    safeConvert s = case readOct s of
+        [(mode, "")] -> return $ GitMode $ if (mode :: Word) .&. 0o100 == 0 then 0o100644 else 0o100755
+        _ -> convError "invalid mode" s
 
 newtype GitTree blob = GitTree (Tree GitMode blob)
     deriving Show
@@ -34,26 +41,20 @@ escapeEquals = fst . foldr doEscape ([], True) where
     doEscape '=' (rest, True) = ('=' : '=' : rest, True)
     doEscape c (rest, _) = (c : rest, False)
 
-blobify :: IsString a => String -> String -> (String, GitMode, Tree GitMode a)
-blobify name content = (name, 0o100644, Blob $ fromString content)
+blobify :: String -> a -> (String, GitMode, Tree GitMode a)
+blobify name content = (name, GitMode 0o100644, Blob content)
 
-instance IsString a => Convertible (PosixTree a) (GitTree a) where
-    safeConvert (PosixTree (Blob blob)) = return $ GitTree $ Blob blob
-    safeConvert (PosixTree (Tree tree)) = liftM (GitTree . Tree) $ foldM splititem [] tree where
+instance Convertible blob GitMode => Convertible (AbstractTree blob) (GitTree blob) where
+    safeConvert (AbstractTree (Blob blob)) = return $ GitTree $ Blob blob
+    safeConvert (AbstractTree (Tree tree)) = liftM (GitTree . Tree) $ foldM splititem [] tree where
 
         splititem tree' (name, meta, item) = do
-            GitTree item' <- safeConvert (PosixTree item)
+            GitTree item' <- safeConvert (AbstractTree item)
             let escaped = escapeEquals name
-            return $ (escaped ++ "=", 0o100755, Tree $ map toGitMeta meta) : (escaped, toGitMode meta item', item') : tree'
+            return $
+                (escaped ++ "=", GitMode 0o040000, Tree $ map (uncurry blobify) meta) :
+                (escaped, toGitMode meta item', item') :
+                tree'
 
-        toGitMeta (PosixMode mode) = blobify "mode" $ showOct mode ""
-        toGitMeta (PosixUID uid) = blobify "uid" $ show uid
-        toGitMeta (PosixGID gid) = blobify "gid" $ show gid
-        toGitMeta (PosixUName uname) = blobify "uname" uname
-        toGitMeta (PosixGName gname) = blobify "gname" gname
-        toGitMeta (PosixMTime mtime) = blobify "mtime" $ show (truncate mtime :: Integer)
-
-        toGitMode _ (Tree _) = 0o040000
-        -- FIXME: handle irregular files
-        -- FIXME: use 0o120000 for symlinks
-        toGitMode meta _ = head $ [ if mode .&. 0o100 == 0 then 0o100644 else 0o100755 | PosixMode mode <- meta ] ++ [ 0o100644 ]
+        toGitMode _ (Tree _) = GitMode 0o040000
+        toGitMode meta _ = head $ [ mode | ("mode", safeConvert -> Right mode) <- meta ] ++ [ GitMode 0o100644 ]
