@@ -1,7 +1,7 @@
 import Bits
 import Huffman
 
-import Control.Monad
+import Control.Monad.State
 import Data.Bits
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Lazy as L
@@ -141,14 +141,24 @@ parseDeflateBlocks = do
         then return [block]
         else liftM (block :) parseDeflateBlocks
 
+type SlidingWindow a = State [Word8] a
+
+write :: Word8 -> SlidingWindow ()
+write w = modify (w :)
+copy :: Int -> SlidingWindow ()
+copy dist = do
+    bs <- get
+    write $ bs !! (dist - 1)
+extract :: SlidingWindow () -> L.ByteString
+extract = L.pack . reverse . flip execState []
+
 inflateBlocks :: [DeflateBlock] -> L.ByteString
-inflateBlocks = L.pack . reverse . foldl doBlock [] where
-    doBlock rest (Uncompressed bs) = reverse (S.unpack bs) ++ rest
-    doBlock rest (LempelZiv lzs) = foldl unLZ rest lzs
-    unLZ out (LZRef 0 _) = out
-    unLZ out (LZRef len dist) = unLZ (out !! (dist - 1) : out) (LZRef (len - 1) dist)
-    unLZ out (LZLit c) = c : out
-    unLZ out LZEOF = out
+inflateBlocks = extract . mapM_ doBlock where
+    doBlock (Uncompressed bs) = mapM_ write $ S.unpack bs
+    doBlock (LempelZiv lzs) = mapM_ unLZ lzs
+    unLZ (LZRef len dist) = replicateM_ len $ copy dist
+    unLZ (LZLit c) = write c
+    unLZ LZEOF = return ()
 
 unpredict :: [DeflateBlock] -> [[(Int, Int)]] -> [(Int, Int)]
 unpredict [] [] = []
