@@ -15,10 +15,6 @@ import Data.Word
 import GHC.Exts
 import System.Environment
 
-toList :: Seq.Seq a -> [a]
-{-# INLINE toList #-}
-toList s = build $ \ k z -> Foldable.foldr k z s
-
 lzchoices :: L.ByteString -> [[(Int, Int)]]
 lzchoices everything = unfoldr bump (IntMap.empty, 0, L.replicate 32768 0 `L.append` everything) where
     bump (_, _, buffer) | L.null (L.drop 32770 buffer) = Nothing
@@ -31,7 +27,7 @@ lzchoices everything = unfoldr bump (IntMap.empty, 0, L.replicate 32768 0 `L.app
         offsetof n = narrow (ringptr - n - 1) + 1
         common a b = length $ takeWhile id $ L.zipWith (==) a b
         lengthof n = common (L.take 258 input) $ L.drop (fromIntegral $ narrow (n - ringptr)) buffer
-        matches = [ (lengthof n, offsetof n) | n <- toList $ IntMap.findWithDefault Seq.empty key history ]
+        matches = [ (lengthof n, offsetof n) | n <- Foldable.toList $ IntMap.findWithDefault Seq.empty key history ]
         history' = IntMap.insertWith (Seq.><) key (Seq.singleton ringptr) $ IntMap.alter (>>= prune) (key3 buffer) history
         prune xs = case Seq.viewr xs of
             (xs' Seq.:> a) | a == ringptr -> if Seq.null xs' then Nothing else Just xs'
