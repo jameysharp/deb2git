@@ -1,6 +1,6 @@
 module Bits (BitGet, runBitGet, getBits, byteAlign, getBytes) where
 
-import Control.Monad.State.Strict
+import Control.Monad.State
 import Data.Bits
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Internal as BSI
