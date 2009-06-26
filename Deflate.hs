@@ -176,20 +176,23 @@ inflateBlocks = extract . Foldable.foldMap doBlock where
     unLZ (LZRef len dist) = mconcat $ replicate len $ copy dist
     unLZ (LZLit c) = write c
 
-unpredict :: [DeflateBlock] -> [[(Int, Int)]] -> [(Int, Int)]
+data Unpredict = ULit | URef {-# UNPACK #-} !Int {-# UNPACK #-} !Int
+    deriving Show
+
+unpredict :: [DeflateBlock] -> [[(Int, Int)]] -> [Unpredict]
 unpredict [] [] = []
 unpredict [] _ = error "unpredict: too many choices"
 unpredict (Uncompressed bs : blocks) choices = unpredict blocks $ drop (S.length bs) choices
 unpredict (LempelZiv lzs : blocks) choices = lzblock lzs choices $ unpredict blocks where
-    lzblock :: [LZSym] -> [[(Int, Int)]] -> ([[(Int, Int)]] -> [(Int, Int)]) -> [(Int, Int)]
+    lzblock :: [LZSym] -> [[(Int, Int)]] -> ([[(Int, Int)]] -> [Unpredict]) -> [Unpredict]
     lzblock (LZRef len dist : syms) (cs : css) f = badness len dist cs : lzblock syms (drop (len - 1) css) f
     lzblock (LZLit _ : syms) ([] : css) f = lzblock syms css f
-    lzblock (LZLit _ : syms) (cs : css) f = (length cs, 0) : lzblock syms css f
+    lzblock (LZLit _ : syms) (_ : css) f = ULit : lzblock syms css f
     lzblock _ css f = f css
 
     badness len dist = badness' 0 . sortBy (comparing (Down . fst)) where
         badness' _ [] = error "lzchoices missed a choice"
-        badness' l ((len', dist') : xs) | dist == dist' = (l, len' - len)
+        badness' l ((len', dist') : xs) | dist == dist' = URef (len' - len) l
                                         | otherwise = badness' (l + 1) xs
 
 main :: IO ()
