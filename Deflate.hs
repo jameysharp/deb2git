@@ -144,9 +144,7 @@ parseDeflateBlock = do
 parseDeflateBlocks :: BitGet [DeflateBlock]
 parseDeflateBlocks = do
     (done, block) <- parseDeflateBlock
-    if done
-        then return [block]
-        else liftM (block :) parseDeflateBlocks
+    liftM (block :) $ if done then return [] else parseDeflateBlocks
 
 newtype SlidingWindow = SlidingWindow ((RingBuffer -> L.ByteString) -> RingBuffer -> L.ByteString)
 data RingBuffer = RingBuffer (ForeignPtr Word8) {-# UNPACK #-} !Int
