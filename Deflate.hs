@@ -56,13 +56,13 @@ getCodeLengthSymbols getLengthSym = next (fail "code lengths begin with repeat")
         rest <- next (return prev) (n - count)
         return $ replicate count prev ++ rest
 
-getLZSymbol :: HuffmanTable -> BitGet LZSym
+getLZSymbol :: HuffmanTable -> BitGet (Maybe LZSym)
 getLZSymbol (getLitSym, getDistSym) = do
     sym <- getLitSym
     case sym of
-        256 -> return LZEOF
+        256 -> return Nothing
         285 -> getdist 258
-        _ | sym <= 255 -> return $ LZLit $ fromIntegral sym
+        _ | sym <= 255 -> return $ Just $ LZLit $ fromIntegral sym
         _ | sym <= 264 -> getdist (fromIntegral sym - 257 + 3)
         _ | sym <= 284 -> do
             let i = fromIntegral sym - 261
@@ -75,7 +75,7 @@ getLZSymbol (getLitSym, getDistSym) = do
     where
     getdist lit = do
         code <- getDistSym
-        liftM (LZRef lit) $ case code of
+        liftM (Just . LZRef lit) $ case code of
             _ | code <= 3 -> return $ fromIntegral code + 1
             _ | code <= 29 -> do
                 let i = fromIntegral code - 2
@@ -118,7 +118,7 @@ parseDeflateHeader = do
         2 -> liftM (HuffmanHeader . Just) dynamicHuffman
         _ -> fail "deflate block with reserved type"
 
-data LZSym = LZLit {-# UNPACK #-} !Word8 | LZEOF | LZRef {-# UNPACK #-} !Int {-# UNPACK #-} !Int
+data LZSym = LZLit {-# UNPACK #-} !Word8 | LZRef {-# UNPACK #-} !Int {-# UNPACK #-} !Int
     deriving Show
 
 data DeflateBlock = Uncompressed S.ByteString | LempelZiv [LZSym]
@@ -135,10 +135,10 @@ parseDeflateBlock = do
         HuffmanHeader maybeTable -> do
             let table = fromMaybe fixedTable maybeTable
             let getLZSymbols = do
-                    lzsym <- getLZSymbol table
-                    case lzsym of
-                        LZEOF -> return []
-                        _ -> liftM (lzsym :) getLZSymbols
+                    maybesym <- getLZSymbol table
+                    case maybesym of
+                        Nothing -> return []
+                        Just lzsym -> liftM (lzsym :) getLZSymbols
             liftM LempelZiv getLZSymbols
 
 parseDeflateBlocks :: BitGet [DeflateBlock]
@@ -177,7 +177,6 @@ inflateBlocks = extract . Foldable.foldMap doBlock where
     doBlock (LempelZiv lzs) = Foldable.foldMap unLZ lzs
     unLZ (LZRef len dist) = mconcat $ replicate len $ copy dist
     unLZ (LZLit c) = write c
-    unLZ LZEOF = mempty
 
 unpredict :: [DeflateBlock] -> [[(Int, Int)]] -> [(Int, Int)]
 unpredict [] [] = []
