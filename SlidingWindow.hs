@@ -31,6 +31,7 @@ copy dist = SlidingWindow $ \ k buf@(RingBuffer fp idx) -> inlinePerformIO $ do
         let (SlidingWindow k') = write w
         return $ k' k buf
 extract :: SlidingWindow -> L.ByteString
-extract (SlidingWindow k) = k finish newRing where
-    newRing = RingBuffer (unsafePerformIO $ mallocByteString 32768) 0
-    finish (RingBuffer fp len) = (fromForeignPtr fp 0 len) `chunk` L.empty
+extract (SlidingWindow k) = unsafePerformIO $ do
+    buf <- mallocByteString 32768
+    return $ flip k (RingBuffer buf 0) $
+        \ (RingBuffer fp len) -> (fromForeignPtr fp 0 len) `chunk` L.empty
