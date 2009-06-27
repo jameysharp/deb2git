@@ -1,6 +1,7 @@
-module Bits (BitGet, runBitGet, getBits, byteAlign, getBytes) where
+module Bits (BitGet, runBitGet, getBits, byteAlign, getBytes, putInt) where
 
 import Control.Monad.State
+import Data.Binary.Put
 import Data.Bits
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Internal as BSI
@@ -50,3 +51,9 @@ getBytes count = BitGet $ do
         Just (ret, rest) -> do
             put $ BitString 0 rest
             return ret
+
+putInt :: Int -> Put
+putInt n | n < 128 = putWord8 (fromIntegral n)
+putInt n = do
+    putWord8 (fromIntegral n .&. 0x7f .|. 0x80)
+    putInt $ n `shiftR` 7

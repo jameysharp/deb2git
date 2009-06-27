@@ -2,6 +2,7 @@ import Bits
 import Huffman
 
 import Control.Monad.State
+import Data.Binary.Put
 import Data.Bits
 import qualified Data.ByteString as S
 import Data.ByteString.Internal
@@ -195,6 +196,10 @@ unpredict (LempelZiv lzs : blocks) choices = lzblock lzs choices $ unpredict blo
         badness' l ((len', dist') : xs) | dist == dist' = URef (len' - len) l
                                         | otherwise = badness' (l + 1) xs
 
+putUnpredict :: Unpredict -> Put
+putUnpredict ULit = putInt 0
+putUnpredict (URef dLen dDist) = putInt $ ((dLen `shiftL` 15) .|. dDist) + 1
+
 main :: IO ()
 main = do
     args <- getArgs
@@ -204,4 +209,4 @@ main = do
         let d'' = if ((d `L.index` 3) .&. 0x8) == 0 then d' else L.drop (1 + fromJust (L.elemIndex 0 d')) d'
         let blocks = runBitGet parseDeflateBlocks d''
         let choices = lzchoices $ inflateBlocks blocks
-        mapM_ print $ unpredict blocks choices
+        L.putStr $ runPut $ mapM_ putUnpredict $ unpredict blocks choices
