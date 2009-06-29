@@ -19,7 +19,7 @@ import GHC.Exts
 import System.Environment
 
 lzchoices :: L.ByteString -> [[(Int, Int)]]
-lzchoices everything = unfoldr bump (IntMap.empty, 0, L.replicate 32768 0 `L.append` everything) where
+lzchoices everything = unfoldr bump (IntMap.empty, 0, L.replicate 32768 0 `L.append` everything) ++ [[], []] where
     bump (_, _, buffer) | L.null (L.drop 32770 buffer) = Nothing
     bump (history, ringptr, buffer) = Just (matches, (history', narrow (ringptr + 1), L.tail buffer)) where
         narrow n = n .&. 32767
