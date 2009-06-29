@@ -1,4 +1,4 @@
-module Bits (BitGet, runBitGet, getBits, byteAlign, getBytes, putInt) where
+module Bits (BitGet, BitString, runBitGet, getBits, byteAlign, getBytes, gatherBits, putInt, putBitString) where
 
 import Control.Monad.State
 import Data.Binary.Put
@@ -6,9 +6,11 @@ import Data.Bits
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Internal as BSI
 import qualified Data.ByteString.Lazy as L
+import Data.Int
 
-data BitString = BitString {-# UNPACK #-} !Int L.ByteString
-newtype BitGet a = BitGet { unBitGet :: State BitString a }
+data S = S {-# UNPACK #-} !Int64 {-# UNPACK #-} !Int L.ByteString
+newtype BitGet a = BitGet { unBitGet :: State S a }
+data BitString = BitString L.ByteString !Int
 
 instance Monad BitGet where
     return a = BitGet $ return a
@@ -16,16 +18,16 @@ instance Monad BitGet where
     fail s = BitGet $ fail s
 
 runBitGet :: BitGet a -> L.ByteString -> a
-runBitGet (BitGet m) bs = evalState m $ BitString 0 bs
+runBitGet (BitGet m) bs = evalState m $ S 0 0 bs
 
 getBits :: Enum e => Int -> BitGet e
 getBits = BitGet . liftM toEnum . (get >>=) . align where
-    align 0 bs = put bs >> return 0
-    align count (BitString used str)
+    align 0 s = put s >> return 0
+    align count (S bytes used str)
         | L.null str = fail "getBits: premature end of input"
-        | count < avail = put (BitString (used + count) str) >> return (bits .&. mask)
+        | count < avail = put (S bytes (used + count) str) >> return (bits .&. mask)
         | otherwise = do
-            v <- align (count - avail) (BitString 0 (L.tail str))
+            v <- align (count - avail) (S (bytes + 1) 0 (L.tail str))
             return $ (v `shiftL` avail) .|. bits
         where
         avail = bitSize (L.head str) - used
@@ -34,8 +36,8 @@ getBits = BitGet . liftM toEnum . (get >>=) . align where
 
 byteAlign :: BitGet ()
 byteAlign = BitGet $ modify advance where
-    advance s@(BitString 0 _) = s
-    advance (BitString _ bs) = BitString 0 $ L.tail bs
+    advance s@(S _ 0 _) = s
+    advance (S bytes _ bs) = S (bytes + 1) 0 $ L.tail bs
 
 strictSplitAt :: Int -> L.ByteString -> Maybe (S.ByteString, L.ByteString)
 strictSplitAt len = check . L.splitAt (fromIntegral len) where
@@ -44,16 +46,26 @@ strictSplitAt len = check . L.splitAt (fromIntegral len) where
 
 getBytes :: Int -> BitGet S.ByteString
 getBytes count = BitGet $ do
-    BitString used str <- get
+    S bytes used str <- get
     when (used /= 0) $ fail "getBytes: input stream not byte-aligned"
     case strictSplitAt count str of
         Nothing -> fail "getBytes: premature end of input"
         Just (ret, rest) -> do
-            put $ BitString 0 rest
+            put $ S (bytes + fromIntegral count) 0 rest
             return ret
+
+gatherBits :: BitGet a -> BitGet (BitString, a)
+gatherBits (BitGet m) = BitGet $ do
+    S bytes begin str <- get
+    a <- m
+    S bytes' end _ <- get
+    return (BitString (L.take (bytes' - bytes + if end /= 0 then 1 else 0) str) begin, a)
 
 putInt :: Int -> Put
 putInt n | n < 128 = putWord8 (fromIntegral n)
 putInt n = do
     putWord8 (fromIntegral n .&. 0x7f .|. 0x80)
     putInt $ n `shiftR` 7
+
+putBitString :: BitString -> Put
+putBitString (BitString bs begin) = putWord8 (fromIntegral begin) >> putLazyByteString bs

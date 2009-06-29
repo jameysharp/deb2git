@@ -120,10 +120,10 @@ data LZSym = LZLit {-# UNPACK #-} !Word8 | LZRef {-# UNPACK #-} !Int {-# UNPACK 
 data DeflateBlock = Uncompressed S.ByteString | LempelZiv [LZSym]
     deriving Show
 
-parseDeflateBlock :: BitGet (Bool, DeflateBlock)
+parseDeflateBlock :: BitGet (Bool, (BitString, DeflateBlock))
 parseDeflateBlock = do
-    (done, header) <- parseDeflateHeader
-    liftM ((,) done) $ case header of
+    (bits, (done, header)) <- gatherBits $ parseDeflateHeader
+    liftM ((,) done . (,) bits) $ case header of
         UncompressedHeader len -> do
             clen <- getBits 16
             unless (len == complement clen) $ fail "bad length in uncompressed block"
@@ -137,7 +137,7 @@ parseDeflateBlock = do
                         Just lzsym -> liftM (lzsym :) getLZSymbols
             liftM LempelZiv getLZSymbols
 
-parseDeflateBlocks :: BitGet [DeflateBlock]
+parseDeflateBlocks :: BitGet [(BitString, DeflateBlock)]
 parseDeflateBlocks = do
     (done, block) <- parseDeflateBlock
     liftM (block :) $ if done then return [] else parseDeflateBlocks
@@ -152,16 +152,23 @@ inflateBlocks = extract . Foldable.foldMap doBlock where
 data Unpredict = ULit | URef {-# UNPACK #-} !Int {-# UNPACK #-} !Int
     deriving Show
 
-unpredict :: [DeflateBlock] -> [[(Int, Int)]] -> [Unpredict]
-unpredict [] [] = []
+unpredict :: [(BitString, DeflateBlock)] -> [[(Int, Int)]] -> Put
+unpredict [] [] = return ()
 unpredict [] _ = error "unpredict: too many choices"
-unpredict (Uncompressed bs : blocks) choices = unpredict blocks $ drop (S.length bs) choices
-unpredict (LempelZiv lzs : blocks) choices = lzblock lzs choices $ unpredict blocks where
-    lzblock :: [LZSym] -> [[(Int, Int)]] -> ([[(Int, Int)]] -> [Unpredict]) -> [Unpredict]
-    lzblock (LZRef len dist : syms) (cs : css) f = badness len dist cs : lzblock syms (drop (len - 1) css) f
-    lzblock (LZLit _ : syms) ([] : css) f = lzblock syms css f
-    lzblock (LZLit _ : syms) (_ : css) f = ULit : lzblock syms css f
-    lzblock _ css f = f css
+unpredict ((header, b) : blocks) choices = do
+    putBitString header
+    case b of
+        Uncompressed bs -> unpredict blocks $ drop (S.length bs) choices
+        LempelZiv lzs -> do
+            let (choices', unpredicts) = mapAccumL lzsym choices lzs
+            mapM_ putUnpredict $ catMaybes unpredicts
+            unpredict blocks choices'
+    where
+    lzsym :: [[(Int, Int)]] -> LZSym -> ([[(Int, Int)]], Maybe Unpredict)
+    lzsym (cs : css) (LZRef len dist) = (drop (len - 1) css, Just $ badness len dist cs)
+    lzsym ([] : css) (LZLit _) = (css, Nothing)
+    lzsym (_ : css) (LZLit _) = (css, Just ULit)
+    lzsym [] _ = error "unpredict: not enough choices"
 
     badness len dist = badness' 0 . sortBy (comparing (Down . fst)) where
         badness' _ [] = error "lzchoices missed a choice"
@@ -180,5 +187,5 @@ main = do
         let d' = L.drop 10 d
         let d'' = if ((d `L.index` 3) .&. 0x8) == 0 then d' else L.drop (1 + fromJust (L.elemIndex 0 d')) d'
         let blocks = runBitGet parseDeflateBlocks d''
-        let choices = lzchoices $ inflateBlocks blocks
-        L.putStr $ runPut $ mapM_ putUnpredict $ unpredict blocks choices
+        let choices = lzchoices $ inflateBlocks $ map snd blocks
+        L.putStr $ runPut $ unpredict blocks choices
