@@ -13,8 +13,9 @@ import Data.Bits
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Lazy as L
 import qualified Data.Foldable as Foldable
+import Data.Function
 import Data.List
-import qualified Data.IntMap as IntMap
+import qualified Data.Map as Map
 import Data.Maybe
 import Data.Monoid
 import Data.Ord
@@ -22,20 +23,35 @@ import qualified Data.Sequence as Seq
 import Data.Word
 import GHC.Exts
 
+toDescList :: Foldable.Foldable t => t a -> [a]
+{-# INLINE toDescList #-}
+toDescList t = build (\ c n -> Foldable.foldl (flip c) n t)
+
+mergeBy :: (a -> a -> Ordering) -> [a] -> [a] -> [a]
+mergeBy _ [] b = b
+mergeBy _ a [] = a
+mergeBy cmp (a:as) (b:bs) = if a `cmp` b /= GT
+    then a : mergeBy cmp as (b:bs)
+    else b : mergeBy cmp (a:as) bs
+
 lzchoices :: L.ByteString -> [[(Int, Int)]]
-lzchoices everything = unfoldr bump (IntMap.empty, 0, L.replicate 32768 0 `L.append` everything) ++ [[], []] where
+lzchoices everything = unfoldr bump (Map.empty, 0, L.replicate 32768 0 `L.append` everything) ++ [[], []] where
     bump (_, _, buffer) | L.null (L.drop 32770 buffer) = Nothing
     bump (history, ringptr, buffer) = Just (matches, (history', narrow (ringptr + 1), L.tail buffer)) where
         narrow n = n .&. 32767
-        input = L.drop 32768 buffer
-        -- XXX: keep previous key and update it incrementally
-        key3 bs = let b = fromIntegral . L.index bs in (b 0 `shiftL` 16) .|. (b 1 `shiftL` 8) .|. b 2
-        key = key3 input
+        key = L.take 258 $ L.drop 32768 buffer
         offsetof n = narrow (ringptr - n - 1) + 1
         common a b = length $ takeWhile id $ L.zipWith (==) a b
-        lengthof n = common (L.take 258 input) $ L.drop (fromIntegral $ narrow (n - ringptr)) buffer
-        matches = [ (lengthof n, offsetof n) | n <- Foldable.toList $ IntMap.findWithDefault Seq.empty key history ]
-        history' = IntMap.insertWith (Seq.><) key (Seq.singleton ringptr) $ IntMap.alter (>>= prune) (key3 buffer) history
+        lengthof n = common key $ L.drop (fromIntegral $ narrow (n - ringptr)) buffer
+        makeRefs s = let l = Foldable.toList s in (lengthof $ head l, map offsetof l)
+        (less, exact, more) = Map.splitLookup key history
+        lessRefs = map makeRefs $ toDescList less
+        moreRefs = map makeRefs $ Foldable.toList more
+        mergedRefs = takeWhile ((>= 3) . fst) $ mergeBy (comparing (Down . fst)) lessRefs moreRefs
+        mergeDists l = (fst $ head l, foldr (mergeBy compare . snd) [] l)
+        inexactRefs = map mergeDists $ groupBy ((==) `on` fst) mergedRefs
+        matches = concatMap (uncurry (map . (,))) $ maybe id ((:) . makeRefs) exact inexactRefs
+        history' = Map.insertWith (Seq.><) key (Seq.singleton ringptr) $ Map.alter (>>= prune) (L.take 258 buffer) history
         prune xs = case Seq.viewr xs of
             (xs' Seq.:> a) | a == ringptr -> if Seq.null xs' then Nothing else Just xs'
             _ -> Just xs
@@ -210,7 +226,7 @@ unpredict ((header, block) : blocks) choices = do
         (a', Nothing) -> let trailing' = trailing + 1 in trailing' `seq` ((trailing', a'), Nothing)
         (a', mc) -> ((0, a'), mc)
 
-    badness len dist = badness' 0 . sortBy (comparing (Down . fst)) where
+    badness len dist = badness' 0 where
         badness' _ [] = error "lzchoices missed a choice"
         badness' l ((len', dist') : xs) | dist == dist' = URef (len' - len) l
                                         | otherwise = badness' (l + 1) xs
@@ -266,7 +282,7 @@ reflate uncompressed = runBitGet $ execBitPutT (reflate' uncompressed $ lzchoice
         putLZSymbol table $ Just $ LZLit $ L.head bs
         lift getUnpredict >>= reflateBlock table css (L.tail bs)
     reflateBlock table (cs : css) bs (URef dLen dDist) = do
-        let (bestLen, dist) = sortBy (comparing (Down . fst)) cs !! dDist
+        let (bestLen, dist) = cs !! dDist
         let len = bestLen - dLen
         putLZSymbol table $ Just $ LZRef len dist
         lift getUnpredict >>= reflateBlock table (drop (len-1) css) (L.drop (fromIntegral len) bs)
