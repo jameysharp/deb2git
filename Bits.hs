@@ -125,7 +125,7 @@ putBits count e = BitPutT $ do
 putInt :: Monad m => Int -> BitPutT m ()
 putInt n | n < 128 = putBits 8 n
 putInt n = do
-    putBits 8 $ n .&. 0x7f .|. 0x80
+    putBits 8 $ n .|. 0x80
     putInt $ n `shiftR` 7
 
 putBitString :: Monad m => BitString -> BitPutT m ()
