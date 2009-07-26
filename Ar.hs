@@ -1,4 +1,4 @@
-module Ar (readAr, writeAr, readArTree) where
+module Ar (readAr, writeAr, readArTree, writeArTree) where
 
 import Tree
 
@@ -79,11 +79,14 @@ writeEntry (name, meta, body) = do
     putLazyByteString body
     when (odd len) $ putByteString (S.singleton '\n')
 
-readArTree :: L.ByteString -> AbstractTree L.ByteString
+readArTree :: L.ByteString -> ([String], AbstractTree L.ByteString)
 readArTree = archiveToTree mktree . readAr where
     mktree (_, meta, bytes) = case lookup "mode" meta >>= getInt (8 :: Int) of
         Just 0o040000 | L.null bytes -> Tree []
         _ -> Blob bytes
+
+writeArTree :: ([String], AbstractTree L.ByteString) -> L.ByteString
+writeArTree = writeAr . treeToArchive L.empty
 
 match :: S.ByteString -> Get ()
 match expected = do

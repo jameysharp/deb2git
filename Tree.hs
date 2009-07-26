@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 module Tree where
 
+import Data.List
 import Data.Typeable
 import System.FilePath
 
@@ -15,8 +16,8 @@ newtype AbstractTree blob = AbstractTree (Tree (AbstractMeta blob) blob)
 newtype Archive blob = Archive [(String, AbstractMeta blob, blob)]
     deriving Show
 
-archiveToTree :: ((String, AbstractMeta blob, blob) -> Tree (AbstractMeta blob) blob) -> Archive blob -> AbstractTree blob
-archiveToTree mktree (Archive files) = AbstractTree $ Tree $ foldl (flip merge) [] files where
+archiveToTree :: ((String, AbstractMeta blob, blob) -> Tree (AbstractMeta blob) blob) -> Archive blob -> ([String], AbstractTree blob)
+archiveToTree mktree (Archive files) = (map (\ (a,_,_) -> a) files, AbstractTree $ Tree $ foldl (flip merge) [] files) where
     merge file@(path, meta, _) = bypath $ splitDirectories $ normalise path where
         bypath [] _ = error "empty path"
         bypath [name] prev = (name, meta, mktree file) : prev
@@ -24,3 +25,13 @@ archiveToTree mktree (Archive files) = AbstractTree $ Tree $ foldl (flip merge) 
             byname [] = error "no such directory"
             byname ((name, meta', ~(Tree tree)) : xs) | name == dirname = (name, meta', Tree $ bypath names tree) : xs
             byname (x : xs) = x : byname xs
+
+treeToArchive :: blob -> ([String], AbstractTree blob) -> Archive blob
+treeToArchive emptyblob (files, AbstractTree root) = Archive $ map (reblob . pull) files where
+    reblob (fullname, meta, tree) = (fullname, meta, case tree of Blob b -> b; Tree _ -> emptyblob)
+    pull fullname = foldl locate (fullname, [], root) $ splitDirectories $ normalise fullname
+    findentry (Tree tree) name = find (\ (e, _, _) -> e == name) tree
+    findentry _ _ = Nothing
+    locate (fullname, meta, tree) name = case findentry tree name of
+        Just (_, meta, subtree) -> (fullname, meta, subtree)
+        _ -> error $ "file \"" ++ fullname ++ "\" not found in tree"
