@@ -260,10 +260,11 @@ getUnpredict = do
         _ | odd n -> UEOF $ (n `shiftR` 1) - 1
         _ -> URef (n `shiftR` 16) ((n `shiftR` 1) .&. 0x7fff)
 
-inflate :: L.ByteString -> (L.ByteString, L.ByteString)
-inflate bs = (runIdentity $ execBitPutT $ unpredict blocks $ lzchoices inflated, inflated) where
-    inflated = inflateBlocks $ map snd blocks
-    blocks = runGet (runBitGet parseDeflateBlocks) bs
+inflate :: Get (L.ByteString, L.ByteString)
+inflate = do
+    blocks <- runBitGet parseDeflateBlocks
+    let inflated = inflateBlocks $ map snd blocks
+    return (runIdentity $ execBitPutT $ unpredict blocks $ lzchoices inflated, inflated)
 
 reflate :: L.ByteString -> L.ByteString -> L.ByteString
 reflate uncompressed = runGet $ execBitPutT (reflate' uncompressed $ lzchoices uncompressed) where
