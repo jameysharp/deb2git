@@ -9,6 +9,7 @@ import SlidingWindow
 import Control.Monad.Identity
 import Control.Monad.Trans
 import Data.Array.Unboxed
+import Data.Binary.Get hiding (getBytes)
 import Data.Bits
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Lazy as L
@@ -231,12 +232,27 @@ unpredict ((header, block) : blocks) choices = do
         badness' l ((len', dist') : xs) | dist == dist' = URef (len' - len) l
                                         | otherwise = badness' (l + 1) xs
 
+putInt :: Monad m => Int -> BitPutT m ()
+putInt n | n < 128 = putBits 8 n
+putInt n = do
+    putBits 8 $ n .|. 0x80
+    putInt $ n `shiftR` 7
+
 putUnpredict :: Monad m => Unpredict -> BitPutT m ()
 putUnpredict ULit = putInt 1
 putUnpredict (URef dLen dDist) = putInt $ ((dLen `shiftL` 15) .|. dDist) `shiftL` 1
 putUnpredict (UEOF trailing) = putInt $ (trailing `shiftL` 1) + 3
 
-getUnpredict :: BitGet Unpredict
+getInt :: Get Int
+getInt = do
+    byte <- liftM fromIntegral getWord8
+    if testBit byte 7
+        then do
+            rest <- getInt
+            return $ (rest `shiftL` 7) .|. (byte .&. 0x7f)
+        else return byte
+
+getUnpredict :: Get Unpredict
 getUnpredict = do
     n <- getInt
     return $ case n of
@@ -247,15 +263,14 @@ getUnpredict = do
 inflate :: L.ByteString -> (L.ByteString, L.ByteString)
 inflate bs = (runIdentity $ execBitPutT $ unpredict blocks $ lzchoices inflated, inflated) where
     inflated = inflateBlocks $ map snd blocks
-    blocks = runBitGet parseDeflateBlocks bs
+    blocks = runGet (runBitGet parseDeflateBlocks) bs
 
 reflate :: L.ByteString -> L.ByteString -> L.ByteString
-reflate uncompressed = runBitGet $ execBitPutT (reflate' uncompressed $ lzchoices uncompressed) where
+reflate uncompressed = runGet $ execBitPutT (reflate' uncompressed $ lzchoices uncompressed) where
     reflate' bs css = do
         offset <- bitPutOffset
-        (bits, (done, header)) <- lift $ gatherBits $ parseDeflateHeader offset
+        (bits, (done, header)) <- lift $ runBitGet $ gatherBits $ parseDeflateHeader offset
         putBitString bits
-        lift byteAlign
         (bs', css') <- case header of
             UncompressedHeader len -> do
                 putBits 16 (complement len)

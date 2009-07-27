@@ -1,7 +1,7 @@
 module Bits (
-    BitGet, runBitGet, bitOffset, getBits, skipBits, byteAlign, getInt, getBytes,
+    BitGet, runBitGet, bitOffset, getBits, skipBits, getBytes,
     BitString, gatherBits,
-    BitPutT, runBitPutT, execBitPutT, bitPutOffset, putBits, putInt, putBitString, putBytes
+    BitPutT, runBitPutT, execBitPutT, bitPutOffset, putBits, putBitString, putBytes
 ) where
 
 import Control.Monad.State
@@ -18,11 +18,8 @@ data S = S {-# UNPACK #-} !Int {-# UNPACK #-} !Word8
 type BitGet a = StateT S Get a
 data BitString = BitString L.ByteString !Int !Int
 
-runBitGet :: BitGet a -> L.ByteString -> a
-runBitGet = runGet . embedBitGet
-
-embedBitGet :: BitGet a -> Get a
-embedBitGet = flip evalStateT $ S 0 0
+runBitGet :: BitGet a -> Get a
+runBitGet = flip evalStateT $ S 0 0
 
 bitOffset :: BitGet Int
 bitOffset = do
@@ -46,18 +43,6 @@ skipBits :: Int -> BitGet ()
 skipBits n = do
     getBits n :: BitGet Int
     return ()
-
-byteAlign :: BitGet ()
-byteAlign = put $ S 0 0
-
-getInt :: BitGet Int
-getInt = do
-    byte <- getBits 8
-    if testBit byte 7
-        then do
-            rest <- getInt
-            return $ (rest `shiftL` 7) .|. (byte .&. 0x7f)
-        else return byte
 
 getBytes :: Int -> BitGet S.ByteString
 getBytes count = do
@@ -112,12 +97,6 @@ putBits count e = BitPutT $ do
             tell $ singleton byte
             putBits' (fromIntegral v) (c - 8) (v `shiftR` 8)
         | otherwise = put (c + 8, byte)
-
-putInt :: Monad m => Int -> BitPutT m ()
-putInt n | n < 128 = putBits 8 n
-putInt n = do
-    putBits 8 $ n .|. 0x80
-    putInt $ n `shiftR` 7
 
 putBitString :: Monad m => BitString -> BitPutT m ()
 putBitString (BitString bs 0 0) = putBytes bs
