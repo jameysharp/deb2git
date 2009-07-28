@@ -1,4 +1,4 @@
-module Ar (readAr, writeAr, readArTree, writeArTree) where
+module Ar (readAr, writeAr) where
 
 import Tree
 
@@ -26,7 +26,7 @@ writeAr (Archive entries) = runPut $ do
     putByteString arMagic
     mapM_ writeEntry entries
 
-readEntries :: Get [(String, AbstractMeta L.ByteString, L.ByteString)]
+readEntries :: Get [(String, AbstractMeta L.ByteString, Maybe L.ByteString)]
 readEntries = do
     empty <- isEmpty
     if empty then return [] else do
@@ -34,18 +34,21 @@ readEntries = do
     rest <- readEntries
     return $ entry : rest
 
-readEntry :: Get (String, AbstractMeta L.ByteString, L.ByteString)
+readEntry :: Get (String, AbstractMeta L.ByteString, Maybe L.ByteString)
 readEntry = do
     name <- rtrim 16
     mtime <- rtrim 12; getInt (10 :: Int) mtime
     uid <- rtrim 6; getInt (10 :: Int) uid
     gid <- rtrim 6; getInt (10 :: Int) gid
-    mode <- rtrim 8; getInt (8 :: Int) mode
+    mode <- rtrim 8
+    modeint <- getInt (8 :: Int) mode
     len <- rtrim 10 >>= getInt 10
     match arFileMagic
     body <- getLazyByteString len
     when (odd len) $ match (S.singleton '\n')
-    return (L.unpack name, [("mtime", mtime), ("uid", uid), ("gid", gid), ("mode", mode)], body)
+    return (L.unpack name,
+        [("mtime", mtime), ("uid", uid), ("gid", gid), ("mode", mode)],
+        if modeint == 0o040000 && L.null body then Nothing else Just body)
 
 data ArMeta = ArMeta { armtime, aruid, argid, armode, arlength :: L.ByteString }
 
@@ -66,10 +69,10 @@ matchmeta ("mode", v) meta = meta { armode = v }
 matchmeta ("length", v) meta = meta { arlength = v }
 matchmeta _ meta = meta
 
-writeEntry :: (String, AbstractMeta L.ByteString, L.ByteString) -> Put
+writeEntry :: (String, AbstractMeta L.ByteString, Maybe L.ByteString) -> Put
 writeEntry (name, meta, body) = do
     rpad 16 $ L.pack name
-    let armeta = foldr matchmeta (defaultmeta $ L.length body) meta
+    let armeta = foldr matchmeta (defaultmeta $ maybe 0 L.length body) meta
     rpad 12 $ armtime armeta
     rpad 6 $ aruid armeta
     rpad 6 $ argid armeta
@@ -77,17 +80,11 @@ writeEntry (name, meta, body) = do
     rpad 10 $ arlength armeta
     let len = digitToInt $ L.last $ arlength armeta
     putByteString arFileMagic
-    putLazyByteString body
-    when (odd len) $ putByteString (S.singleton '\n')
-
-readArTree :: L.ByteString -> ([String], AbstractTree L.ByteString)
-readArTree = archiveToTree mktree . readAr where
-    mktree (_, meta, bytes) = case lookup "mode" meta >>= getInt (8 :: Int) of
-        Just 0o040000 | L.null bytes -> Tree []
-        _ -> Blob bytes
-
-writeArTree :: ([String], AbstractTree L.ByteString) -> L.ByteString
-writeArTree = writeAr . treeToArchive L.empty
+    case body of
+        Just bytes -> do
+            putLazyByteString bytes
+            when (odd len) $ putByteString (S.singleton '\n')
+        _ -> return ()
 
 match :: S.ByteString -> Get ()
 match expected = do
