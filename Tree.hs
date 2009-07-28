@@ -32,6 +32,6 @@ treeToArchive emptyblob (files, AbstractTree root) = Archive $ map (reblob . pul
     pull fullname = foldl locate (fullname, [], root) $ splitDirectories $ normalise fullname
     findentry (Tree tree) name = find (\ (e, _, _) -> e == name) tree
     findentry _ _ = Nothing
-    locate (fullname, meta, tree) name = case findentry tree name of
+    locate (fullname, _, tree) name = case findentry tree name of
         Just (_, meta, subtree) -> (fullname, meta, subtree)
         _ -> error $ "file \"" ++ fullname ++ "\" not found in tree"

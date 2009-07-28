@@ -64,6 +64,7 @@ matchmeta ("uid", v) meta = meta { aruid = v }
 matchmeta ("gid", v) meta = meta { argid = v }
 matchmeta ("mode", v) meta = meta { armode = v }
 matchmeta ("length", v) meta = meta { arlength = v }
+matchmeta _ meta = meta
 
 writeEntry :: (String, AbstractMeta L.ByteString, L.ByteString) -> Put
 writeEntry (name, meta, body) = do
@@ -74,7 +75,7 @@ writeEntry (name, meta, body) = do
     rpad 6 $ argid armeta
     rpad 8 $ armode armeta
     rpad 10 $ arlength armeta
-    let len = read $ L.unpack $ arlength armeta
+    let len = digitToInt $ L.last $ arlength armeta
     putByteString arFileMagic
     putLazyByteString body
     when (odd len) $ putByteString (S.singleton '\n')
