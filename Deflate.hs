@@ -172,7 +172,7 @@ parseDeflateBlock :: BitGet (Bool, (BitString, DeflateBlock))
 parseDeflateBlock = do
     offset <- bitOffset
     (bits, (done, header)) <- gatherBits $ parseDeflateHeader offset
-    liftM ((,) done . (,) bits) $ case header of
+    block <- case header of
         UncompressedHeader len -> do
             clen <- getBits 16
             unless (len == complement clen) $ fail "bad length in uncompressed block"
@@ -185,6 +185,7 @@ parseDeflateBlock = do
                         Nothing -> return []
                         Just lzsym -> liftM (lzsym :) getLZSymbols
             liftM LempelZiv getLZSymbols
+    return (done, (bits, block))
 
 parseDeflateBlocks :: BitGet [(BitString, DeflateBlock)]
 parseDeflateBlocks = do

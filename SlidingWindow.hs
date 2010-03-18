@@ -12,8 +12,12 @@ import Foreign.Ptr
 import Foreign.Storable
 import System.IO.Unsafe
 
-newtype SlidingWindow = SlidingWindow ((RingBuffer -> L.ByteString) -> RingBuffer -> L.ByteString)
+newtype SlidingWindow = SlidingWindow
+    ((RingBuffer -> L.ByteString) ->
+     (RingBuffer -> L.ByteString))
+
 data RingBuffer = RingBuffer (ForeignPtr Word8) {-# UNPACK #-} !Int
+
 instance Monoid SlidingWindow where
     (SlidingWindow f) `mappend` (SlidingWindow g) = SlidingWindow (f . g)
     mempty = SlidingWindow id
@@ -25,11 +29,13 @@ write w = SlidingWindow $ \ k (RingBuffer fp idx) -> inlinePerformIO $ do
     return $ case buf' of
         RingBuffer _ 0 -> S.copy (fromForeignPtr fp 0 32768) `chunk` k buf'
         _ -> k buf'
+
 copy :: Int -> SlidingWindow
 copy dist = SlidingWindow $ \ k buf@(RingBuffer fp idx) -> inlinePerformIO $ do
         w <- withForeignPtr fp $ \ p -> peek (p `plusPtr` ((idx - dist) .&. 32767))
         let (SlidingWindow k') = write w
         return $ k' k buf
+
 extract :: SlidingWindow -> L.ByteString
 extract (SlidingWindow k) = unsafePerformIO $ do
     buf <- mallocByteString 32768
